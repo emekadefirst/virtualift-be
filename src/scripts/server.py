@@ -20,9 +20,9 @@ app = FastAPI(
     },
     default_response_class=responses.ORJSONResponse,
 )
-@app.on_event("startup")
-async def startup_event():
-    await VHDMService.init()
+# @app.on_event("startup")
+# async def startup_event():
+#     await VHDMService.init()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=['*'],

@@ -5,7 +5,7 @@ from src.configs.env import HF_TOKEN
 from huggingface_hub import hf_hub_download
 
 # Import model classes from VITON-HD
-from src.apps.tryonml.services.network import SegGenerator, GMM, ALIASGenerator  # Adjust path if needed
+from src.apps.tryonml.services.network import SegGenerator, GMM, ALIASGenerator
 
 REPO_ID = "emekadefirst/virtualfit-models"
 
@@ -28,7 +28,6 @@ async def load_model_async(filename: str, model_class, model_args):
     def _load():
         model_path = hf_hub_download(REPO_ID, filename, token=HF_TOKEN)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        opt = get_opt()  # Get options for model initialization
         model = model_class(**model_args).to(device)  # Instantiate the model
         state_dict = torch.load(model_path, map_location=device)
         model.load_state_dict(state_dict)  # Load the weights
@@ -42,7 +41,10 @@ async def load_viton_models():
     # Model-specific arguments based on test.py
     seg_args = {'opt': opt, 'input_nc': opt.semantic_nc + 8, 'output_nc': opt.semantic_nc}  # 21 input, 13 output
     gmm_args = {'opt': opt, 'inputA_nc': 7, 'inputB_nc': 3}
-    alias_args = {'opt': opt, 'input_nc': 9}
+    # Create a separate opt for ALIASGenerator with semantic_nc=7
+    alias_opt = get_opt()
+    alias_opt.semantic_nc = 7  # Match test.py
+    alias_args = {'opt': alias_opt, 'input_nc': 9}
     
     seg_task = asyncio.create_task(load_model_async("seg_final.pth", SegGenerator, seg_args))
     gmm_task = asyncio.create_task(load_model_async("gmm_final.pth", GMM, gmm_args))
