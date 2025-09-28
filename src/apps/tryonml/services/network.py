@@ -353,11 +353,18 @@ class MaskNorm(nn.Module):
         return normalized_foreground + normalized_background
 
 
-class ALIASNorm(nn.Module):
-    def __init__(self, norm_type, norm_nc, label_nc):
-        super(ALIASNorm, self).__init__()
 
-        self.noise_scale = nn.Parameter(torch.zeros(norm_nc))
+# src/apps/tryonml/services/network.py
+import torch
+import torch.nn as nn
+
+class ALIASNorm(nn.Module):
+    def __init__(self, norm_type, norm_nc, label_nc, num_features, num_seg=8, num_mis=1, noise_scale=0.001):
+        super(ALIASNorm, self).__init__()
+        self.num_features = num_features
+        self.num_seg = num_seg
+        self.num_mis = num_mis
+        self.noise_scale = noise_scale
 
         assert norm_type.startswith('alias')
         param_free_norm_type = norm_type[len('alias'):]
@@ -380,25 +387,51 @@ class ALIASNorm(nn.Module):
         self.conv_beta = nn.Conv2d(nhidden, norm_nc, kernel_size=ks, padding=pw)
 
     def forward(self, x, seg, misalign_mask=None):
-        # Part 1. Generate parameter-free normalized activations.
         b, c, h, w = x.size()
-        noise = (torch.randn(b, w, h, 1).cuda() * self.noise_scale).transpose(1, 3)
+        noise = (torch.randn(b, w, h, 1, device=x.device) * self.noise_scale).transpose(1, 3)
 
         if misalign_mask is None:
             normalized = self.param_free_norm(x + noise)
         else:
             normalized = self.param_free_norm(x + noise, misalign_mask)
 
-        # Part 2. Produce affine parameters conditioned on the segmentation map.
         actv = self.conv_shared(seg)
         gamma = self.conv_gamma(actv)
         beta = self.conv_beta(actv)
 
-        # Apply the affine parameters.
         output = normalized * (1 + gamma) + beta
         return output
 
+# Sample ALIASGenerator (update based on your network.py)
+class ALIASGenerator(nn.Module):
+    def __init__(self, opt):
+        super(ALIASGenerator, self).__init__()
+        self.opt = opt
+        self.relu = nn.ReLU(inplace=True)
+        mult = 1
+        self.head_0 = ResBlock(opt.ngf * mult, opt.norm, opt.semantic_nc, num_features=opt.ngf * mult)
+        # ... (other layers)
+        self.conv_img = nn.Conv2d(opt.ngf, 3, 3, padding=1)
 
+    def forward(self, features, seg_div, misalign_mask):
+        x = self.head_0(features, seg_div, misalign_mask)
+        # ... (rest of forward pass)
+        x = self.conv_img(self.relu(x))
+        x = nn.Tanh()(x)
+        return x
+
+class ResBlock(nn.Module):
+    def __init__(self, nc, norm_type, label_nc, num_features):
+        super(ResBlock, self).__init__()
+        self.norm_0 = ALIASNorm(norm_type, nc, label_nc, num_features=num_features)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv_0 = nn.Conv2d(nc, nc, 3, 1, 1)
+        # ... (other layers)
+
+    def forward(self, x, seg, misalign_mask):
+        dx = self.conv_0(self.relu(self.norm_0(x, seg, misalign_mask)))
+        # ... (rest of forward pass)
+        return x
 class ALIASResBlock(nn.Module):
     def __init__(self, opt, input_nc, output_nc, use_mask_norm=True):
         super(ALIASResBlock, self).__init__()
@@ -424,10 +457,10 @@ class ALIASResBlock(nn.Module):
             subnorm_type = 'aliasmask'
             semantic_nc = semantic_nc + 1
 
-        self.norm_0 = ALIASNorm(subnorm_type, input_nc, semantic_nc)
-        self.norm_1 = ALIASNorm(subnorm_type, middle_nc, semantic_nc)
+        self.norm_0 = ALIASNorm(subnorm_type, input_nc, semantic_nc, num_features=input_nc)
+        self.norm_1 = ALIASNorm(subnorm_type, middle_nc, semantic_nc, num_features=middle_nc)
         if self.learned_shortcut:
-            self.norm_s = ALIASNorm(subnorm_type, input_nc, semantic_nc)
+            self.norm_s = ALIASNorm(subnorm_type, input_nc, semantic_nc, num_features=input_nc)
 
         self.relu = nn.LeakyReLU(0.2)
 
@@ -448,7 +481,6 @@ class ALIASResBlock(nn.Module):
         dx = self.conv_1(self.relu(self.norm_1(dx, seg, misalign_mask)))
         output = x_s + dx
         return output
-
 
 class ALIASGenerator(BaseNetwork):
     def __init__(self, opt, input_nc):

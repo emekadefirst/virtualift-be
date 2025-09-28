@@ -3,6 +3,9 @@ import torch
 import asyncio
 from src.configs.env import HF_TOKEN
 from huggingface_hub import hf_hub_download
+from transformers import AutoModel
+import torch
+from .network import SegGenerator, ALIASGenerator
 
 # Import model classes from VITON-HD
 from src.apps.tryonml.services.network import SegGenerator, GMM, ALIASGenerator
@@ -36,19 +39,39 @@ async def load_model_async(filename: str, model_class, model_args):
     
     return await asyncio.to_thread(_load)
 
+
+
+# src/apps/tryonml/services/loader.py
+from transformers import AutoModel
+import torch
+from .network import SegGenerator, ALIASGenerator, GMM
+
 async def load_viton_models():
-    opt = get_opt()  # Get options for model initialization
-    # Model-specific arguments based on test.py
-    seg_args = {'opt': opt, 'input_nc': opt.semantic_nc + 8, 'output_nc': opt.semantic_nc}  # 21 input, 13 output
-    gmm_args = {'opt': opt, 'inputA_nc': 7, 'inputB_nc': 3}
-    # Create a separate opt for ALIASGenerator with semantic_nc=7
-    alias_opt = get_opt()
-    alias_opt.semantic_nc = 7  # Match test.py
-    alias_args = {'opt': alias_opt, 'input_nc': 9}
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    seg_task = asyncio.create_task(load_model_async("seg_final.pth", SegGenerator, seg_args))
-    gmm_task = asyncio.create_task(load_model_async("gmm_final.pth", GMM, gmm_args))
-    alias_task = asyncio.create_task(load_model_async("alias_final.pth", ALIASGenerator, alias_args))
+    class Options:
+        def __init__(self):
+            self.ngf = 64
+            self.norm = 'alias_instance'
+            self.norm_G = 'spectralaliasmask'
+            self.semantic_nc = 8
+            self.input_nc = 9
+            self.num_features = 64
+            self.load_height = 1024
+            self.load_width = 768
+            self.grid_size = 5
+            self.num_upsampling_layers = 'normal'
+            self.init_type = 'normal'
+            self.init_variance = 0.02
+
+    opt = Options()
+    seg_model = SegGenerator(opt, input_nc=21, output_nc=13).to(device)
+    gmm_model = GMM(opt, inputA_nc=7, inputB_nc=3).to(device)
+    alias_model = ALIASGenerator(opt, input_nc=9).to(device)
     
-    seg_model, gmm_model, alias_model = await asyncio.gather(seg_task, gmm_task, alias_task)
+    seg_model.eval()
+    gmm_model.eval()
+    alias_model.eval()
+    
     return seg_model, gmm_model, alias_model
+
