@@ -12,3 +12,9 @@ wheels/
 main.py
 
 .env
+
+*.pth
+*.pt
+*.bin
+huggingface_hub/
+*.cache
